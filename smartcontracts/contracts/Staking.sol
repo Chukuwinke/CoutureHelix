@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import "./CoutureHelixToken.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "./interfaces/IValidator.sol";
+
+contract Staking is Ownable {
+    CoutureHelixToken public token;
+    IValidator public validatorContract;
+
+    struct StakerInfo{
+        uint256 stakedAmount;
+        uint256 lastStakeTime;
+    }
+
+    mapping(address => StakerInfo) public stakers;
+
+    event TokenStaked(address indexed staker, uint256 amount);
+    event TokenUnStaked(address indexed staker, uint256 amount);
+
+    constructor(address tokenAddress) Ownable(msg.sender) {
+        token = CoutureHelixToken(tokenAddress);
+        
+    }
+
+    function setValidatorContract(address validatorContractAddress) external onlyOwner {
+        validatorContract = IValidator(validatorContractAddress);
+    }
+
+    // !!! for security reasons consider changing uint256 to a integer data type that doest accept negative values
+    function stakeTokens (uint256 amount) public {
+        require(amount > 0, "Amount must be greater than 0");
+        require(token.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+
+        stakers[msg.sender].stakedAmount += amount;
+        stakers[msg.sender].lastStakeTime = block.timestamp;
+
+        emit TokenStaked(msg.sender, amount);
+
+        // !!! potential issue because currently for users to become validators they must stake tokens 
+        //with exeptions for selected promoters find a way to make them them validator if they already arent
+
+        // !!! write test for this
+        if (address(validatorContract) != address(0)  && validatorContract.isValidator(msg.sender)) {
+            validatorContract.updateCombinedReputation(msg.sender); // update validators reputation
+        }
+
+    }
+
+    function unstakeTokens (uint256 amount) public {
+        require(stakers[msg.sender].stakedAmount >= amount, "Insufficient staked amount");
+
+        stakers[msg.sender].stakedAmount -= amount;
+        require(token.transfer(msg.sender, amount), "Transfer failed");
+
+        emit TokenUnStaked(msg.sender, amount);
+
+        // !!! user does not need to be a validator to unstake incase they themselves or admin revokes their validator
+        // status before unstaking
+        if (address(validatorContract) != address(0)) {
+            validatorContract.updateCombinedReputation(msg.sender); // update validators reputation
+        }
+
+    }
+
+    function getStakedAmount(address staker) public view returns (uint256){
+        return stakers[staker].stakedAmount;
+    }
+}
+
+
+// pragma solidity ^0.8.27;
+
+// import "./CoutureHelixToken.sol";
+// import "@openzeppelin/contracts/access/Ownable.sol";
+// import "./Validator.sol";
+
+// contract Staking is Ownable {
+//     CoutureHelixToken public token;
+//     Validator public validatorContract;
+
+//     struct StakerInfo{
+//         uint256 stakedAmount;
+//         uint256 lastStakeTime;
+//     }
+
+//     mapping(address => StakerInfo) public stakers;
+
+//     event TokenStaked(address indexed staker, uint256 amount);
+//     event TokenUnStaked(address indexed staker, uint256 amount);
+
+//     constructor(address tokenAddress, address validatorContractAddress) Ownable(msg.sender) {
+//         token = CoutureHelixToken(tokenAddress);
+//         validatorContract = Validator(validatorContractAddress);
+//     }
+
+//     // !!! for security reasons consider changing uint256 to a integer data type that doest accept negative values
+//     function stakeTokens (uint256 amount) public {
+//         require(amount > 0, "Amount must be greater than 0");
+//         require(token.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+
+//         stakers[msg.sender].stakedAmount += amount;
+//         stakers[msg.sender].lastStakeTime = block.timestamp;
+
+//         emit TokenStaked(msg.sender, amount);
+
+//         // !!! potential issue because currently for users to become validators they must stake tokens 
+//         //with exeptions for selected promoters find a way to make them them validator if they already arent
+//         validatorContract.updateCombinedReputation(msg.sender); // update validators reputation
+
+//     }
+
+//     function unstakeTokens (uint256 amount) public {
+//         require(stakers[msg.sender].stakedAmount >= amount, "Insufficient staked amount");
+
+//         stakers[msg.sender].stakedAmount -= amount;
+//         require(token.transfer(msg.sender, amount), "Transfer failed");
+
+//         emit TokenUnStaked(msg.sender, amount);
+
+//         // !!! user does not need to be a validator to unstake incase they themselves or admin revokes their validator
+//         // status before unstaking
+//         validatorContract.updateCombinedReputation(msg.sender); // update validators reputation
+
+//     }
+
+//     function getStakedAmount(address staker) public view returns (uint256){
+//         return stakers[staker].stakedAmount;
+//     }
+// }
