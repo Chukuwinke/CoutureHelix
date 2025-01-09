@@ -92,12 +92,6 @@ contract Validator is AccessControlEnumerable {
         emit OnChainReputationAdjusted(validator, validators[validator].onChainReputation);
     }
 
-    // remove before deployment
-    function setReputation(address validator, uint256 reputation) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    validators[validator].combinedReputation = reputation;
-    }
-
-
     //! why is there no onlyRole(DEFAULT_ADMIN_ROLE) in this function? because no appernt risk it is public information anyways and tampering is easily detected
     function updateCombinedReputation(address validator) public {
         require(isValidator(validator), "Not a validator");
