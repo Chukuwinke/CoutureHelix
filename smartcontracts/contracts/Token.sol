@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PausableUpgradeable.sol";
@@ -7,23 +7,26 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUp
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "./cMetatx/CustomERC2771ContextUpgradeable.sol";
+import "hardhat/console.sol";
 
 contract Token is
     Initializable,
+    ERC20Upgradeable,
     ERC20BurnableUpgradeable,
     ERC20PausableUpgradeable,
     ERC20PermitUpgradeable,
     AccessControlUpgradeable,
     OwnableUpgradeable,
-    UUPSUpgradeable
+    UUPSUpgradeable,
+    CustomERC2771ContextUpgradeable
 {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
     uint256 private _cap;
 
-    // Blacklist mapping
     mapping(address => bool) private _blacklist;
 
     event Blacklisted(address indexed account);
@@ -40,7 +43,8 @@ contract Token is
         uint256 cap_,
         address multisigAdmin,
         address minter,
-        address upgrader
+        address upgrader,
+        address trustedForwarder
     ) public initializer {
         require(cap_ > 0, "Cap must be greater than 0");
         _cap = cap_;
@@ -52,12 +56,14 @@ contract Token is
         __AccessControl_init();
         __Ownable_init(multisigAdmin);
         __UUPSUpgradeable_init();
+        __CustomERC2771ContextUpgradeable_init(trustedForwarder);
 
         _grantRole(DEFAULT_ADMIN_ROLE, multisigAdmin);
         _grantRole(MINTER_ROLE, minter);
         _grantRole(UPGRADER_ROLE, upgrader);
 
         _mint(multisigAdmin, initialSupply);
+        transferOwnership(multisigAdmin); // Transfer ownership to multisig admin
     }
 
     function setCap(uint256 newCap) public onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -92,9 +98,9 @@ contract Token is
     }
 
     function burn(uint256 amount) public override {
-        require(!_blacklist[msg.sender], "Caller is blacklisted");
+        require(!_blacklist[_msgSender()], "Caller is blacklisted");
         super.burn(amount);
-        emit Burned(msg.sender, amount);
+        emit Burned(_msgSender(), amount);
     }
 
     function pause() public onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -107,12 +113,37 @@ contract Token is
 
     function grantRole(bytes32 role, address account) public override onlyRole(DEFAULT_ADMIN_ROLE) {
         super.grantRole(role, account);
-        emit Granted(role, account, msg.sender);
+        emit Granted(role, account, _msgSender());
     }
 
     function revokeRole(bytes32 role, address account) public override onlyRole(DEFAULT_ADMIN_ROLE) {
         super.revokeRole(role, account);
-        emit Revoked(role, account, msg.sender);
+        emit Revoked(role, account, _msgSender());
+    }
+
+    function approve(address spender, uint256 amount) public override returns (bool) {
+        console.log("approve called:");
+        console.log("Owner:", _msgSender());
+        console.log("Spender:", spender);
+        console.log("Amount:", amount);
+        return super.approve(spender, amount);
+    }
+
+    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
+        console.log("transferFrom called by:", _msgSender());
+        console.log("transferFrom called:");
+        console.log("Sender:", sender);
+        console.log("Recipient:", recipient);
+        console.log("Amount:", amount);
+        return super.transferFrom(sender, recipient, amount);
+    }
+
+    function _spendAllowance(address owner, address spender, uint256 amount) internal virtual override {
+        console.log("_spendAllowance called:");
+        console.log("Owner:", owner);
+        console.log("Spender:", spender);
+        console.log("Amount:", amount);
+        super._spendAllowance(owner, spender, amount);
     }
 
     function _update(address from, address to, uint256 amount)
@@ -124,14 +155,30 @@ contract Token is
         super._update(from, to, amount);
     }
 
-    function _authorizeUpgrade(address newImplementation)
+    function _msgSender()
         internal
-        override
-        onlyRole(UPGRADER_ROLE)
-    {}
+        view
+        override(ContextUpgradeable, CustomERC2771ContextUpgradeable)
+        returns (address)
+    {
+        return CustomERC2771ContextUpgradeable._msgSender();
+    }
+
+    function _msgData()
+        internal
+        view
+        override(ContextUpgradeable, CustomERC2771ContextUpgradeable)
+        returns (bytes calldata)
+    {
+        return CustomERC2771ContextUpgradeable._msgData();
+    }
+
+    function setTrustedForwarder(address forwarder) public override onlyRole(DEFAULT_ADMIN_ROLE) {
+        super.setTrustedForwarder(forwarder);
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {}
 }
-
-
 
 // import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 // import "@openzeppelin/contracts/access/Ownable.sol";

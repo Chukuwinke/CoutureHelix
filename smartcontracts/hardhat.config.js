@@ -12,6 +12,7 @@ module.exports = {
         enabled: true,
         runs: 200, // Adjust this value based on your use case
       },
+      viaIR: true,
     },
   },
   gasReporter: {

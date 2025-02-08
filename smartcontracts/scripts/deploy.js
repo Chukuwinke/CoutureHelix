@@ -1,41 +1,37 @@
-const { ethers } = require("hardhat");
+const { ethers, upgrades } = require("hardhat");
 
 async function main() {
-  const [deployer] = await ethers.getSigners();
+  const Token = await ethers.getContractFactory("Token");
 
-  console.log("Deploying contracts with the account:", deployer.address);
+  // Addresses
+  const multisigAdminAddress = "0xB71aD5938e315182c25dfE87F636594a00f03e1e"; // Replace with your multisig wallet address
+  const minterAddress = "0xD9e2d04435b2c12B5bDA262328A58C98aacc2672";          // Replace with MetaMask Account 1
+  const upgraderAddress = "0xaF8D2D801A16576A1b3470836642b2499DC4ffA7";        // Replace with MetaMask Account 2
 
-  // Deploy CoutureHelixToken contract
-  const CoutureHelixToken = await ethers.getContractFactory("CoutureHelixToken");
-  const initialAdminWallet = deployer.address; // Replace with your admin wallet address if needed
-  const rewardToken = await CoutureHelixToken.deploy(initialAdminWallet);
-  await rewardToken.deployed();
+  // Initial Supply: 100 billion tokens (10^18 decimals)
+  const initialSupply = ethers.parseUnits("100000000000", 18);
 
-  console.log("CoutureHelixToken deployed to:", rewardToken.address);
+  // Cap: 100 billion tokens
+  const cap = ethers.parseUnits("100000000000", 18);
 
-  // Mint some initial tokens to the deployer's wallet (optional)
-  const initialMintAmount = ethers.utils.parseEther("100000");
-  await rewardToken.mintToAdmin(initialMintAmount);
-  console.log(`Minted ${ethers.utils.formatEther(initialMintAmount)} CHTK to admin wallet.`);
+  console.log("Deploying Token contract...");
 
-  // Deploy FashionDNA contract
-  const FashionDNA = await ethers.getContractFactory("FashionDNA");
-  const backendAddress = deployer.address; // Replace with your backend wallet address if needed
-  const fashionDNA = await FashionDNA.deploy(rewardToken.address, backendAddress);
-  await fashionDNA.deployed();
+  const token = await upgrades.deployProxy(
+    Token,
+    [
+      "FashionDNA",  // Name
+      "FDNA",            // Symbol
+      initialSupply,    // Initial Supply
+      cap,              // Cap
+      multisigAdminAddress,
+      minterAddress,
+      upgraderAddress
+    ],
+    { initializer: "initialize" }
+  );
 
-  console.log("FashionDNA contract deployed to:", fashionDNA.address);
-
-  // Grant the FashionDNA contract an allowance to distribute rewards (optional for testing)
-  const rewardAllowance = ethers.utils.parseEther("100000");
-  await rewardToken.approve(fashionDNA.address, rewardAllowance);
-  console.log(`Approved ${ethers.utils.formatEther(rewardAllowance)} CHTK for FashionDNA contract.`);
-
-  // Example: Distribute some tokens for testing
-  const testRecipient = deployer.address; // Replace with another address if needed
-  const testRewardAmount = ethers.utils.parseEther("1000");
-  await rewardToken.distributeReward(testRecipient, testRewardAmount);
-  console.log(`Distributed ${ethers.utils.formatEther(testRewardAmount)} CHTK to ${testRecipient}`);
+  await token.waitForDeployment();
+  console.log("Token deployed to:", await token.getAddress());
 }
 
 main()
