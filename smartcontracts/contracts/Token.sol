@@ -9,7 +9,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "./cMetatx/CustomERC2771ContextUpgradeable.sol";
-import "hardhat/console.sol";
+import "./RoleManager.sol";
 
 contract Token is
     Initializable,
@@ -24,6 +24,7 @@ contract Token is
 {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+    RoleManager public roleManager;
 
     uint256 private _cap;
 
@@ -42,8 +43,8 @@ contract Token is
         uint256 initialSupply,
         uint256 cap_,
         address multisigAdmin,
-        address minter,
-        address upgrader,
+        //address minter,
+        //address upgrader,
         address trustedForwarder
     ) public initializer {
         require(cap_ > 0, "Cap must be greater than 0");
@@ -59,16 +60,39 @@ contract Token is
         __CustomERC2771ContextUpgradeable_init(trustedForwarder);
 
         _grantRole(DEFAULT_ADMIN_ROLE, multisigAdmin);
-        _grantRole(MINTER_ROLE, minter);
-        _grantRole(UPGRADER_ROLE, upgrader);
+        //_grantRole(MINTER_ROLE, minter);
+        //_grantRole(UPGRADER_ROLE, upgrader);
 
         _mint(multisigAdmin, initialSupply);
         transferOwnership(multisigAdmin); // Transfer ownership to multisig admin
     }
 
+    // Setters
+    function setRoleManager(address _roleManager) external onlyOwner {
+        require(_roleManager !=address(0), "role manager address cannot be zero");
+        roleManager = RoleManager(_roleManager);
+    }
+
     function setCap(uint256 newCap) public onlyRole(DEFAULT_ADMIN_ROLE) {
         require(newCap > totalSupply(), "New cap must exceed current supply");
         _cap = newCap;
+    }
+
+    // modifiers
+    // Modifier for Backend Role
+    modifier onlyBackendRole() {
+        require(roleManager.hasRole(roleManager.BACKEND_ROLE(), msg.sender), "Token: Caller does not have BACKEND_ROLE");
+        _;
+    }
+    // Modifier for Backend Role
+    modifier onlyMinterRole() {
+        require(roleManager.hasRole(roleManager.MINTER_ROLE(), msg.sender), "Token: Caller does not have MINTER_ROLE");
+        _;
+    }
+
+    modifier onlyUpgraderRole() {
+        require(roleManager.hasRole(roleManager.UPGRADER_ROLE(), msg.sender), "Token: Caller does not have UPGRADER_ROLE");
+        _;
     }
 
     function cap() public view returns (uint256) {
@@ -91,7 +115,7 @@ contract Token is
         return _blacklist[account];
     }
 
-    function mint(address to, uint256 amount) public onlyRole(MINTER_ROLE) {
+    function mint(address to, uint256 amount) public onlyMinterRole {
         require(totalSupply() + amount <= cap(), "Cap exceeded");
         _mint(to, amount);
         emit Minted(to, amount);
@@ -122,27 +146,14 @@ contract Token is
     }
 
     function approve(address spender, uint256 amount) public override returns (bool) {
-        console.log("approve called:");
-        console.log("Owner:", _msgSender());
-        console.log("Spender:", spender);
-        console.log("Amount:", amount);
         return super.approve(spender, amount);
     }
 
     function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
-        console.log("transferFrom called by:", _msgSender());
-        console.log("transferFrom called:");
-        console.log("Sender:", sender);
-        console.log("Recipient:", recipient);
-        console.log("Amount:", amount);
         return super.transferFrom(sender, recipient, amount);
     }
 
     function _spendAllowance(address owner, address spender, uint256 amount) internal virtual override {
-        console.log("_spendAllowance called:");
-        console.log("Owner:", owner);
-        console.log("Spender:", spender);
-        console.log("Amount:", amount);
         super._spendAllowance(owner, spender, amount);
     }
 
@@ -177,47 +188,5 @@ contract Token is
         super.setTrustedForwarder(forwarder);
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyUpgraderRole {}
 }
-
-// import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-// import "@openzeppelin/contracts/access/Ownable.sol";
-
-// contract CoutureHelixToken is ERC20, Ownable {
-//     event TokensDistributed(address indexed recipient, uint256 amount);
-//     event TokensMinted(address indexed adminWallet, uint256 amount);
-
-//     constructor(address adminWallet) ERC20("CoutureHelixToken", "CHTK") Ownable(adminWallet) {
-//         uint256 initialSupply = 1_000_000 * 10 ** decimals();
-//         _mint(adminWallet, initialSupply); // Mint all tokens to the specified admin wallet
-//         emit TokensMinted(adminWallet, initialSupply); // Emit event for initial supply minting
-//     }
-
-//     /**
-//      * @dev Distribute tokens from the admin's wallet to a recipient.
-//      * This function does not mint new tokens; it transfers existing tokens.
-//      */
-//     function distributeReward(address recipient, uint256 amount) external onlyOwner {
-//         require(balanceOf(owner()) >= amount, "Insufficient tokens in admin wallet");
-//         _transfer(owner(), recipient, amount); // Transfer from admin wallet to recipient
-//         emit TokensDistributed(recipient, amount);
-//     }
-
-//     /**
-//      * @dev Mint new tokens to the admin's wallet.
-//      * Minting is restricted to prevent inflation abuse.
-//      * Use this function only if the admin wallet runs low on tokens.
-//      */
-//     function mintToAdmin(uint256 amount) external onlyOwner {
-//         _mint(owner(), amount);
-//         emit TokensMinted(owner(), amount); // Emit event for transparency
-//     }
-
-//     /**
-//      * @dev Burn tokens from the admin's wallet.
-//      * This can be used to reduce supply when necessary.
-//      */
-//     function burnFromAdmin(uint256 amount) external onlyOwner {
-//         _burn(owner(), amount);
-//     }
-// }

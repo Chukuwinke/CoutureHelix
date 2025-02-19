@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
+
 /**
  * @title CustomERC2771ContextUpgradeable
  * @dev Extends OpenZeppelin's ContextUpgradeable to support ERC-2771 and dynamic trusted forwarder updates.
@@ -56,6 +57,7 @@ abstract contract CustomERC2771ContextUpgradeable is Initializable, ContextUpgra
      */
     function _msgSender() internal view virtual override returns (address sender) {
         uint256 calldataLength = msg.data.length;
+        //console.logBytes(msg.data);
         uint256 contextSuffixLength = 20; // Length of an address in bytes
         if (isTrustedForwarder(msg.sender) && calldataLength >= contextSuffixLength) {
             assembly {

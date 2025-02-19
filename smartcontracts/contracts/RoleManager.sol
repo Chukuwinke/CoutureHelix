@@ -7,6 +7,8 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 contract RoleManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable {
     bytes32 public constant BACKEND_ROLE = keccak256("BACKEND_ROLE"); // Define BACKEND_ROLE
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
     // Role members storage
     mapping(bytes32 => address[]) private _roleMembers;
     mapping(bytes32 => mapping(address => uint256)) private _roleMemberIndex; // Maps role -> account -> index in the array
