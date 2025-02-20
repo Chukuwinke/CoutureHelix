@@ -1,0 +1,3 @@
+[submodule "frontend/oploe"]
+	path = frontend/oploe
+	url = https://github.com/Chukuwinke/oploe
