@@ -72,5 +72,24 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
             require(burnSuccess, "Token burn failed");
         }
 
+        if (reimbursementInTokens > 0) {
+            bytes memory reimburseCallData = abi.encodeWithSelector(ICustomToken.transfer.selector, owner(), reimbursementInTokens);
+            bytes memory metaReimburseCallData = abi.encodePacked(reimburseCallData, abi.encodePacked(address(this)));
+            (bool reimbursementSuccess, ) = tokenAddress.call(metaReimburseCallData);
+            require(reimbursementSuccess, "transfer to relayer failed");
+        }
+        // If this call fails, the tokens remain in the forwarder, and the backend can later call withdrawReimbursementTokens.
+
+    }
+
+    // under construction
+    function withdrawReimbursementTokens(address recipient, uint256 amount) public onlyOwner {
+        uint256 forwarderBalance = ICustomToken(tokenAddress).balanceOf(address(this));
+        require(forwarderBalance >= amount, "Insufficient forwarder balance for withdrawal");
+        
+        bytes memory reimburseCallData = abi.encodeWithSelector(ICustomToken.transfer.selector, recipient, amount);
+        bytes memory metaReimburseCallData = abi.encodePacked(reimburseCallData, abi.encodePacked(address(this)));
+        (bool reimbursementSuccess, ) = tokenAddress.call(metaReimburseCallData);
+        require(reimbursementSuccess, "transfer to relayer failed");
     }
 }

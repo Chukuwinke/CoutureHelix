@@ -1,42 +1,118 @@
+const fs = require("fs");
+const path = require("path");
 const { ethers, upgrades } = require("hardhat");
+require("dotenv").config();
 
 async function main() {
-  const Token = await ethers.getContractFactory("Token");
+  // Get signers and use .getAddress() to obtain the actual addresses.
+  const admin = process.env.ADMIN_ADDRESS;
+  const minter = process.env.MINTER_ADDRESS;
+  const upgrader = process.env.UPGRADER_ADDRESS;
+  const backend = process.env.BACKEND_ADDRESS;
+  const defenderRelayer = process.env.DEFENDER_RELAYER_ADDRESS;
 
-  // Addresses
-  const multisigAdminAddress = "0xB71aD5938e315182c25dfE87F636594a00f03e1e"; // Replace with your multisig wallet address
-  const minterAddress = "0xD9e2d04435b2c12B5bDA262328A58C98aacc2672";          // Replace with MetaMask Account 1
-  const upgraderAddress = "0xaF8D2D801A16576A1b3470836642b2499DC4ffA7";        // Replace with MetaMask Account 2
+  // ----------------------------
+  // 1. Deploy RoleManager
+  // ----------------------------
+  const RoleManagerFactory = await ethers.getContractFactory("RoleManager");
+  const roleManager = await upgrades.deployProxy(RoleManagerFactory, [admin], { initializer: "initialize" });
+  await roleManager.waitForDeployment()
+  console.log("RoleManager deployed to:", await roleManager.getAddress());
 
-  // Initial Supply: 100 billion tokens (10^18 decimals)
-  const initialSupply = ethers.parseUnits("100000000000", 18);
+  // Grant roles to designated accounts via RoleManager.
+  await roleManager.connect(await ethers.getSigner(admin)).grantRole(await roleManager.MINTER_ROLE(), minter);
+  await roleManager.connect(await ethers.getSigner(admin)).grantRole(await roleManager.UPGRADER_ROLE(), upgrader);
+  await roleManager.connect(await ethers.getSigner(admin)).grantRole(await roleManager.BACKEND_ROLE(), backend);
+  console.log("Roles granted in RoleManager.");
 
-  // Cap: 100 billion tokens
-  const cap = ethers.parseUnits("100000000000", 18);
+  // ----------------------------
+  // 2. Deploy CustomERC2771ForwarderUpgradeable
+  // ----------------------------
+  const burnPercentage = 1000; // 10% fee when SCALE is 10000.
+  const ForwarderFactory = await ethers.getContractFactory("CustomERC2771ForwarderUpgradeable");
+  // Here we pass a dummy token address (ethers.constants.AddressZero) since token isn't deployed yet.
+  // The initializer signature is: initialize(string,address,uint256,address)
+  const forwarder = await upgrades.deployProxy(
+    ForwarderFactory,
+    ["CustomERC2771ForwarderUpgradeable", ethers.ZeroAddress, burnPercentage, defenderRelayer],
+    { initializer: "initialize(string,address,uint256,address)" }
+  );
+  await forwarder.waitForDeployment();
+  console.log("CustomERC2771ForwarderUpgradeable deployed to:", await forwarder.getAddress());
 
-  console.log("Deploying Token contract...");
-
+  // ----------------------------
+  // 3. Deploy Token Contract
+  // ----------------------------
+  // Token initializer: initialize(string, string, uint256, uint256, address, address)
+  const tokenName = "TestToken";
+  const tokenSymbol = "TST";
+  const initialSupply = ethers.parseUnits("1000000", 18); // 1,000,000 tokens
+  const cap = ethers.parseUnits("2000000", 18); // 2,000,000 tokens
+  const TokenFactory = await ethers.getContractFactory("Token");
   const token = await upgrades.deployProxy(
-    Token,
-    [
-      "FashionDNA",  // Name
-      "FDNA",            // Symbol
-      initialSupply,    // Initial Supply
-      cap,              // Cap
-      multisigAdminAddress,
-      minterAddress,
-      upgraderAddress
-    ],
+    TokenFactory,
+    [tokenName, tokenSymbol, initialSupply, cap, admin, await forwarder.getAddress()],
     { initializer: "initialize" }
   );
-
   await token.waitForDeployment();
   console.log("Token deployed to:", await token.getAddress());
+
+  // ----------------------------
+  // 4. Wire Contracts Together
+  // ----------------------------
+  // Set the trusted forwarder in the Token contract.
+  await token.connect(await ethers.getSigner(admin)).setTrustedForwarder(await forwarder.getAddress());
+  // Update the forwarder with the token address.
+  await forwarder.connect(await ethers.getSigner(admin)).setTokenAddress(await token.getAddress());
+  // Set the RoleManager in the Token contract.
+  await token.connect(await ethers.getSigner(admin)).setRoleManager(await roleManager.getAddress());
+  console.log("Contracts wired together (trusted forwarder and role manager set).");
+
+  // ----------------------------
+  // 6. Save Deployment Data to File
+  // ----------------------------
+  const network = await ethers.provider.getNetwork();
+  const deploymentData = {
+    chainId: network.chainId,
+    network: network.name,
+    roleManager: await roleManager.getAddress(),
+    token: await token.getAddress(),
+    forwarder: await forwarder.getAddress(),
+    trustedForwarder: (await token.trustedForwarder()) || (await forwarder.getAddress()),
+    instructions: {
+      // Defender Relayer credentials (ID, API key, secret) are managed off-chain.
+      defenderRelayer: {
+        note: "Use your Defender Relayer API endpoint with your API key/secret. These credentials are set in Defender’s dashboard and are not part of the contract parameters."
+      },
+      frontend: {
+        tokenAddress: (await token.getAddress()),
+        forwarderAddress: (await forwarder.getAddress()),
+        roleManagerAddress: (await roleManager.getAddress()),
+        chainId: network.chainId,
+        note: "Use the ABIs from the build artifacts for interacting with these contracts."
+      },
+      postman: {
+        note: "For testing via JSON-RPC, use the Defender Relayer API endpoint (provided in Defender’s dashboard) with your API key/secret for eth_sendTransaction calls. See Defender documentation."
+      }
+    }
+  };
+
+  const filePath = path.join(__dirname, "../deployed_contracts.json");
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(
+      deploymentData,
+      (_, value) => typeof value === 'bigint' ? value.toString() : value,
+      2
+    )
+  );
+  
+  console.log("Deployment data saved to", filePath);
 }
 
 main()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error(error);
+    console.error("Deployment failed:", error);
     process.exit(1);
   });
