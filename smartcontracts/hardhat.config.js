@@ -28,11 +28,14 @@ module.exports = {
     hardhat: {},
     polygonAmoy: {
       url: process.env.ALCHEMY_POLYGON_AMOY_URL,
-      accounts: [process.env.PRIVATE_KEY],
+      accounts: [
+        process.env.ALCHEMY_PRIVATE_KEY,
+        process.env.TEST_SENDER_PRIVATE_KEY
+      ],
     },
     sepolia: {
       url: process.env.ALCHEMY_SEPOLIA_URL,
-      accounts: [process.env.PRIVATE_KEY],
+      accounts: [process.env.ALCHEMY_PRIVATE_KEY],
       chainId: 11155111,
     },
   },

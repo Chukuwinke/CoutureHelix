@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@openzeppelin/contracts-upgradeable": "^5.1.0",
+    "@openzeppelin/defender-relay-client": "^1.54.6",
+    "@openzeppelin/defender-sdk": "^2.3.0",
     "merkletreejs": "^0.4.0"
   }
 }
