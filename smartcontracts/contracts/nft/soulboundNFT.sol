@@ -21,7 +21,7 @@ contract SoulBoundNFT is Initializable,
                         OwnableUpgradeable,
                         AccessControlUpgradeable,
                         ERC721URIStorageUpgradeable {
-    
+
     RoleManager public roleManager;
     address public custodialWallet;
     string public baseURI;
@@ -40,7 +40,7 @@ contract SoulBoundNFT is Initializable,
     // Maximum number of premium NFT links allowed per loyalty NFT.
     uint256 public maxPremiumLinks;
 
-    event NFTMinted(uint256 indexed tokenId, address indexed initialOwner, uint256 lockUntil, string ipnsName);
+    event NFTMinted(uint256 indexed tokenId, address indexed initialOwner, uint256 lockUntil, string ipfsCID);
     event NFTClaimed(uint256 indexed tokenId, address indexed newOwner);
     event NFTUpgraded(uint256 indexed tokenId, uint256 newTier);
     event PremiumLinkAdded(uint256 indexed loyaltyTokenId, uint256 premiumTokenId);
@@ -73,12 +73,11 @@ contract SoulBoundNFT is Initializable,
         custodialWallet = custodialWalletAddress;
         baseURI = initialBaseURI;
         tokenCount = 1;
-        maxPremiumLinks = initialMaxPremiumLinks; // For example, 10
+        maxPremiumLinks = initialMaxPremiumLinks;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
-    // Custom modifier: allows calls from the owner or the backend.
     modifier onlyAdminOrBackend() {
         require(
             msg.sender == owner() || roleManager.hasRole(roleManager.BACKEND_ROLE(), msg.sender),
@@ -86,16 +85,17 @@ contract SoulBoundNFT is Initializable,
         );
         _;
     }
+
+    /// @notice Returns the array of premium links for a given token.
     function getPremiumLinks(uint256 tokenId) external view returns (uint256[] memory) {
         return premiumLinks[tokenId];
     }
 
-
     /// @notice Mint a new Loyalty NFT.
     /// @param initialTier The starting loyalty tier.
     /// @param lockDuration The duration (in seconds) for which the NFT remains non-transferable.
-    /// @param ipnsName The IPNS name (without prefix) for the token metadata.
-    function mintNFT(uint256 initialTier, uint256 lockDuration, string memory ipnsName)
+    /// @param ipfsCID The IPFS CID for the token metadata.
+    function mintNFT(uint256 initialTier, uint256 lockDuration, string memory ipfsCID)
         external
         onlyAdminOrBackend
         whenNotPaused
@@ -106,12 +106,10 @@ contract SoulBoundNFT is Initializable,
         _safeMint(custodialWallet, tokenId);
         tokenTier[tokenId] = initialTier;
         lockExpiration[tokenId] = block.timestamp + lockDuration;
-        // Save only ipnsName; _baseURI() will prepend baseURI when tokenURI() is called.
-        _setTokenURI(tokenId, ipnsName);
-        emit NFTMinted(tokenId, custodialWallet, lockExpiration[tokenId], ipnsName);
+        _setTokenURI(tokenId, ipfsCID);
+        emit NFTMinted(tokenId, custodialWallet, lockExpiration[tokenId], ipfsCID);
         return tokenId;
     }
-
 
     /// @notice Claim the NFT from the custodial wallet.
     function claimNFT(uint256 tokenId) external whenNotPaused {
@@ -131,21 +129,15 @@ contract SoulBoundNFT is Initializable,
     /// @notice Update the custodial wallet address.
     function updateCustodialWallet(address newCustodialWallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(newCustodialWallet != address(0), "Invalid wallet address");
-        address previousWallet = custodialWallet;
+        emit CustodialWalletUpdated(custodialWallet, newCustodialWallet);
         custodialWallet = newCustodialWallet;
-        emit CustodialWalletUpdated(previousWallet, newCustodialWallet);
     }
 
     /// @notice Update the token URI for a given token.
     function updateTokenURI(uint256 tokenId, string memory newTokenURI) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_ownerOf(tokenId) != address(0), "No existed Token ID");
+        require(_ownerOf(tokenId) != address(0), "Nonexistent token");
         _setTokenURI(tokenId, newTokenURI);
         emit TokenURIUpdated(tokenId, newTokenURI);
-    }
-
-    /// @notice Override _baseURI to return the baseURI.
-    function _baseURI() internal view override returns (string memory) {
-        return baseURI;
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -156,19 +148,17 @@ contract SoulBoundNFT is Initializable,
         _unpause();
     }
 
-    // Within your SoulBoundNFT contract
+    /// @dev Override _update to restrict transfers for soulbound tokens.
     function _update(address to, uint256 tokenId, address auth) internal override returns (address) {
         address from = _ownerOf(tokenId);
-        // Allow minting (from == address(0)) and burning (to == address(0)).
-        // Also allow a claim transfer: from the custodial wallet to a user.
+        // Allow minting (from == address(0)), burning (to == address(0)), or claiming (from is the custodial wallet).
         if (from != address(0) && to != address(0) && from != custodialWallet) {
             revert("SoulBoundNFT: Transfer not allowed");
         }
         return super._update(to, tokenId, auth);
     }
 
-
-    // Premium NFT linkage functions. try to add security layer by allowing users or backend to add or remove linkage
+    /// @notice Link a premium NFT to a loyalty NFT.
     function addPremiumLink(uint256 loyaltyTokenId, uint256 premiumTokenId) external {
         uint256[] storage links = premiumLinks[loyaltyTokenId];
         require(links.length < maxPremiumLinks, "Max premium links reached");
@@ -177,6 +167,7 @@ contract SoulBoundNFT is Initializable,
         emit PremiumLinkAdded(loyaltyTokenId, premiumTokenId);
     }
 
+    /// @notice Remove a premium NFT link from a loyalty NFT.
     function removePremiumLink(uint256 loyaltyTokenId, uint256 premiumTokenId) external {
         uint256[] storage links = premiumLinks[loyaltyTokenId];
         require(links.length > 0, "No premium links to remove");
@@ -197,20 +188,18 @@ contract SoulBoundNFT is Initializable,
         maxPremiumLinks = newMax;
     }
 
-    // Authorization for upgrades (UUPS pattern).
+    /// @dev Override _baseURI to return the baseURI.
+    function _baseURI() internal view override returns (string memory) {
+        return baseURI;
+    }
+
+    /// @dev Authorization for upgrades (UUPS pattern).
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    // Override _burn to resolve conflicts.
-    //function _burn(uint256 tokenId) internal override(ERC721Upgradeable, ERC721URIStorageUpgradeable) {
-    //    super._burn(tokenId);
-    //}
-
-    // Override tokenURI to resolve conflicts.
     function tokenURI(uint256 tokenId) public view override(ERC721Upgradeable, ERC721URIStorageUpgradeable) returns (string memory) {
         return super.tokenURI(tokenId);
     }
 
-    // Override supportsInterface to combine inherited interfaces.
     function supportsInterface(bytes4 interfaceId) public view override(ERC721Upgradeable, ERC721URIStorageUpgradeable, ERC2981Upgradeable, AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
