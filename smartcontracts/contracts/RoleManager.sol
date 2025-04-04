@@ -61,6 +61,12 @@ contract RoleManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit RevokedRole(role, account, msg.sender);
     }
 
+    // Override renounceRole to block the DEFAULT_ADMIN_ROLE from renouncing
+    function renounceRole(bytes32 role, address account) public virtual override {
+        require(role != DEFAULT_ADMIN_ROLE, "Default admin cannot renounce its role");
+        super.renounceRole(role, account);
+    }
+
     function getRoleMembers(bytes32 role) public view returns (address[] memory) {
         return _roleMembers[role];
     }

@@ -5,7 +5,6 @@ import "@openzeppelin/contracts-upgradeable/metatx/ERC2771ForwarderUpgradeable.s
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "../interfaces/ICustomToken.sol";
-import "hardhat/console.sol";
 
 contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, ReentrancyGuardUpgradeable, OwnableUpgradeable {
     uint256 public burnPercentage;
@@ -14,10 +13,17 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
     // Separate relayer address for reimbursement.
     address public relayerAddress;
 
+    event RelayerChanged(address indexed oldRelayer, address indexed newRelayer);
+
     // Modifier to restrict calls to the designated relayer.
     modifier onlyRelayer() {
         require(msg.sender == relayerAddress, "Not authorized: relayer only");
         _;
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
     
     /**
@@ -38,6 +44,8 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
         __ERC2771Forwarder_init(name);
         __ReentrancyGuard_init();
         __Ownable_init(_admin);
+
+        require(_burnPercentage <= SCALE, "Burn percentage cannot exceed 100%");
         tokenAddress = _tokenAddress;
         burnPercentage = _burnPercentage;
         relayerAddress = _relayer;
@@ -50,9 +58,11 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
     }
     
     // Setter to update the relayer address.
-    function setRelayerAddress(address _relayer) public onlyOwner {
-        require(_relayer != address(0), "Relayer address cannot be zero");
-        relayerAddress = _relayer;
+    function setRelayerAddress(address _newRelayer) public onlyOwner {
+        require(_newRelayer != address(0), "Relayer address cannot be zero");
+        address oldRelayer = relayerAddress;
+        relayerAddress = _newRelayer;
+        emit RelayerChanged(oldRelayer, _newRelayer);
     }
     
     /**
@@ -62,7 +72,7 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
      * from the user via transferFrom and transfers the reimbursement amount to the relayer.
      * This function is callable only by the designated relayer.
      */
-    function executeWithPermitAndReimbursment(
+    function executeWithPermitAndReimbursement(
         ForwardRequestData calldata request,
         uint256 gasUsed,
         uint256 gasPriceInMatic,
@@ -83,8 +93,6 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
         uint256 burnAmount = (reimbursementInTokens * burnPercentage) / SCALE;
         uint256 totalCost = reimbursementInTokens + burnAmount;
         
-        console.log("reached start !");
-        
         // --- Approve spending via permit ---
         // This call gives the forwarder (this contract) the approval to spend totalCost tokens on behalf of request.from.
         ICustomToken(tokenAddress).permit(
@@ -96,7 +104,6 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
             r,
             s
         );
-        console.log("reached 1 !");
         
         // --- Execute the forwarded meta-transaction ---
         // Here we encode the call to execute() (which is inherited from ERC2771ForwarderUpgradeable)
@@ -114,13 +121,11 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
             ICustomToken(tokenAddress).transferFrom(request.from, address(this), totalCost),
             "Token transfer failed"
         );
-        console.log("reached 2 !");
         
         // --- Burn tokens ---
         if (burnAmount > 0) {
             ICustomToken(tokenAddress).burn(burnAmount);
         }
-        console.log("reached 3 !");
         
         // --- Reimburse the relayer ---
         if (reimbursementInTokens > 0) {
@@ -129,13 +134,8 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
                 "Transfer to relayer failed"
             );
         }
-        console.log("finished !");
 
     }
-
-    
-
-
 
     
     // Withdraw function remains unchanged.

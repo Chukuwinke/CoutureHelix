@@ -22,8 +22,6 @@ contract Token is
     UUPSUpgradeable,
     CustomERC2771ContextUpgradeable
 {
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
     RoleManager public roleManager;
 
     uint256 private _cap;
@@ -36,6 +34,12 @@ contract Token is
     event Burned(address indexed from, uint256 amount);
     event Granted(bytes32 indexed role, address indexed account, address indexed admin);
     event Revoked(bytes32 indexed role, address indexed account, address indexed admin);
+    event RoleManagerUpdated(address indexed oldManager, address indexed newManager);
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(
         string memory name,
@@ -49,6 +53,7 @@ contract Token is
     ) public initializer {
         require(cap_ > 0, "Cap must be greater than 0");
         _cap = cap_;
+        require(initialSupply <= cap_, "Initial supply cannot exceed cap");
 
         __ERC20_init(name, symbol);
         __ERC20Burnable_init();
@@ -64,16 +69,17 @@ contract Token is
         //_grantRole(UPGRADER_ROLE, upgrader);
 
         _mint(multisigAdmin, initialSupply);
-        transferOwnership(multisigAdmin); // Transfer ownership to multisig admin
     }
 
     // Setters
     function setRoleManager(address _roleManager) external onlyOwner {
         require(_roleManager !=address(0), "role manager address cannot be zero");
+        address oldManager = address(roleManager);
         roleManager = RoleManager(_roleManager);
+        emit RoleManagerUpdated(oldManager, _roleManager);
     }
 
-    function setCap(uint256 newCap) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setCap(uint256 newCap) public onlyOwner {
         require(newCap > totalSupply(), "New cap must exceed current supply");
         _cap = newCap;
     }
@@ -99,13 +105,14 @@ contract Token is
         return _cap;
     }
 
-    function blacklist(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function blacklist(address account) public onlyOwner {
+        require(account != address(0), "Cannot blacklist zero address");
         require(!_blacklist[account], "Address is already blacklisted");
         _blacklist[account] = true;
         emit Blacklisted(account);
     }
 
-    function unblacklist(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unblacklist(address account) public onlyOwner {
         require(_blacklist[account], "Address is not blacklisted");
         _blacklist[account] = false;
         emit Unblacklisted(account);
@@ -127,22 +134,12 @@ contract Token is
         emit Burned(_msgSender(), amount);
     }
 
-    function pause() public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function pause() public onlyOwner {
         _pause();
     }
 
-    function unpause() public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unpause() public onlyOwner {
         _unpause();
-    }
-
-    function grantRole(bytes32 role, address account) public override onlyRole(DEFAULT_ADMIN_ROLE) {
-        super.grantRole(role, account);
-        emit Granted(role, account, _msgSender());
-    }
-
-    function revokeRole(bytes32 role, address account) public override onlyRole(DEFAULT_ADMIN_ROLE) {
-        super.revokeRole(role, account);
-        emit Revoked(role, account, _msgSender());
     }
 
     function approve(address spender, uint256 amount) public override returns (bool) {
@@ -184,7 +181,7 @@ contract Token is
         return CustomERC2771ContextUpgradeable._msgData();
     }
 
-    function setTrustedForwarder(address forwarder) public override onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setTrustedForwarder(address forwarder) public override onlyOwner {
         super.setTrustedForwarder(forwarder);
     }
 

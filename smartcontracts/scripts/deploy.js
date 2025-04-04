@@ -34,7 +34,7 @@ async function main() {
   // ----------------------------
   // We deploy the forwarder with a dummy token address (ZeroAddress) first.
   // The initializer now takes two addresses: _admin and _relayer.
-  const burnPercentage = 1000; // 10% fee with SCALE = 10000.
+  const burnPercentage = 200; // 2% fee with SCALE = 10000 = 100%.
   const ForwarderFactory = await ethers.getContractFactory("CustomERC2771ForwarderUpgradeable");
   const forwarder = await upgrades.deployProxy(
     ForwarderFactory,
@@ -47,8 +47,8 @@ async function main() {
   // ----------------------------
   // 3. Deploy the Token Contract
   // ----------------------------
-  const tokenName = "KTestToken";
-  const tokenSymbol = "KTST";
+  const tokenName = "JTestToken";
+  const tokenSymbol = "JTST";
   const initialSupply = ethers.parseUnits("1000000", 18); // 1,000,000 tokens
   const cap = ethers.parseUnits("2000000", 18); // 2,000,000 tokens
   const TokenFactory = await ethers.getContractFactory("Token");
