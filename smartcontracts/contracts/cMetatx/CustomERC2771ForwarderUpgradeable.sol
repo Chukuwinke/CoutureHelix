@@ -3,23 +3,21 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/metatx/ERC2771ForwarderUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "../access/AccessControlledUpgradeable.sol";
 import "../interfaces/ICustomToken.sol";
 
-contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, ReentrancyGuardUpgradeable, OwnableUpgradeable {
+/**
+ * @title CustomERC2771ForwarderUpgradeable
+ * @notice Enables meta-transaction execution with off-chain permit approval and token reimbursement.
+ * @dev Inherits from ERC2771ForwarderUpgradeable, ReentrancyGuardUpgradeable, and AccessControlledUpgradeable.
+ */
+contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, ReentrancyGuardUpgradeable, AccessControlledUpgradeable {
     uint256 public burnPercentage;
     uint256 public constant SCALE = 10000;
     address public tokenAddress;
-    // Separate relayer address for reimbursement.
     address public relayerAddress;
 
     event RelayerChanged(address indexed oldRelayer, address indexed newRelayer);
-
-    // Modifier to restrict calls to the designated relayer.
-    modifier onlyRelayer() {
-        require(msg.sender == relayerAddress, "Not authorized: relayer only");
-        _;
-    }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -27,50 +25,57 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
     }
     
     /**
-     * @dev Initializes the contract.
-     * @param name The name for ERC2771Forwarder.
-     * @param _tokenAddress The token address (should be set to the proxy address).
-     * @param _burnPercentage The burn fee percentage (with SCALE=10000).
-     * @param _admin The multisig admin (owner) who controls administrative functions.
-     * @param _relayer The relayer address that will receive reimbursements.
+     * @notice Initializes the forwarder.
+     * @param name Forwarder identifier.
+     * @param _tokenAddress Address of the token used for reimbursements.
+     * @param _burnPercentage Percentage (scaled by SCALE) of reimbursed tokens to burn.
+     * @param roleManagerAddress Address of the RoleManager.
+     * @param _relayer Authorized relayer address.
      */
-    function initialize(
+    function initializeForwarder(
         string memory name,
         address _tokenAddress,
         uint256 _burnPercentage,
-        address _admin,
+        address roleManagerAddress,
         address _relayer
-    ) public virtual initializer {
+    ) public initializer {
         __ERC2771Forwarder_init(name);
         __ReentrancyGuard_init();
-        __Ownable_init(_admin);
-
+        __AccessControlled_init(roleManagerAddress);
         require(_burnPercentage <= SCALE, "Burn percentage cannot exceed 100%");
         tokenAddress = _tokenAddress;
         burnPercentage = _burnPercentage;
         relayerAddress = _relayer;
     }
 
-    // Setter to update the token address if needed.
-    function setTokenAddress(address _tokenAddress) public onlyOwner {
-        require(_tokenAddress != address(0), "Token address cannot be zero");
+    modifier onlyRelayer() {
+        require(msg.sender == relayerAddress, "Not authorized: relayer only");
+        _;
+    }
+    
+    /**
+     * @notice Updates the token contract address.
+     * @param _tokenAddress New token address.
+     */
+    function setTokenAddress(address _tokenAddress) public onlyDAOAdmin {
+        require(_tokenAddress != address(0), "Invalid token address");
         tokenAddress = _tokenAddress;
     }
     
-    // Setter to update the relayer address.
-    function setRelayerAddress(address _newRelayer) public onlyOwner {
-        require(_newRelayer != address(0), "Relayer address cannot be zero");
+    /**
+     * @notice Changes the authorized relayer.
+     * @param _newRelayer New relayer address.
+     */
+    function setRelayerAddress(address _newRelayer) public onlyDAOAdmin {
+        require(_newRelayer != address(0), "Invalid relayer address");
         address oldRelayer = relayerAddress;
         relayerAddress = _newRelayer;
         emit RelayerChanged(oldRelayer, _newRelayer);
     }
     
     /**
-     * @dev Executes a meta-transaction with an off-chain permit for reimbursement.
-     * The permit is used to approve the forwarder to transfer the reimbursement amount from the user.
-     * After executing the meta-transaction, the forwarder deducts the reimbursement (plus burn fee)
-     * from the user via transferFrom and transfers the reimbursement amount to the relayer.
-     * This function is callable only by the designated relayer.
+     * @notice Executes a meta-transaction using a permit and processes token reimbursement.
+     * @dev Callable only by the relayer. Reimburses gas costs and burns a percentage as configured.
      */
     function executeWithPermitAndReimbursement(
         ForwardRequestData calldata request,
@@ -82,19 +87,14 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
         bytes32 r,
         bytes32 s
     ) public payable nonReentrant onlyRelayer {
-        // Check that the attached value matches what is expected.
         if (msg.value != request.value) {
             revert ERC2771ForwarderMismatchedValue(request.value, msg.value);
         }
-        
-        // --- Compute reimbursement values ---
         uint256 gasCostInMatic = gasUsed * gasPriceInMatic;
-        uint256 reimbursementInTokens = (gasCostInMatic * 1e18) / tokenToMaticRate;
+        uint256 reimbursementInTokens = (gasCostInMatic * tokenToMaticRate) / 1e18;
         uint256 burnAmount = (reimbursementInTokens * burnPercentage) / SCALE;
         uint256 totalCost = reimbursementInTokens + burnAmount;
         
-        // --- Approve spending via permit ---
-        // This call gives the forwarder (this contract) the approval to spend totalCost tokens on behalf of request.from.
         ICustomToken(tokenAddress).permit(
             request.from,
             address(this),
@@ -105,47 +105,38 @@ contract CustomERC2771ForwarderUpgradeable is ERC2771ForwarderUpgradeable, Reent
             s
         );
         
-        // --- Execute the forwarded meta-transaction ---
-        // Here we encode the call to execute() (which is inherited from ERC2771ForwarderUpgradeable)
-        // and explicitly append the original sender (request.from) so that the target contract’s custom _msgSender()
-        // returns the correct user address.
+        // Forward the meta-transaction.
         bytes memory execCalldata = abi.encodeWithSelector(this.execute.selector, request);
         execCalldata = abi.encodePacked(execCalldata, request.from);
         (bool execSuccess, ) = address(this).call{ value: request.value }(execCalldata);
         require(execSuccess, "Forwarded call failed");
         
-        // --- Perform reimbursement transfer ---
-        // Since the token contract’s trusted forwarder is set to this contract and the permit approved spending,
-        // we now call transferFrom in a standard way to pull totalCost tokens from request.from.
         require(
             ICustomToken(tokenAddress).transferFrom(request.from, address(this), totalCost),
             "Token transfer failed"
         );
-        
-        // --- Burn tokens ---
         if (burnAmount > 0) {
             ICustomToken(tokenAddress).burn(burnAmount);
         }
-        
-        // --- Reimburse the relayer ---
         if (reimbursementInTokens > 0) {
             require(
                 ICustomToken(tokenAddress).transfer(relayerAddress, reimbursementInTokens),
                 "Transfer to relayer failed"
             );
         }
-
     }
-
     
-    // Withdraw function remains unchanged.
-    function withdrawReimbursementTokens(address recipient, uint256 amount) public onlyOwner {
+    /**
+     * @notice Withdraws tokens accumulated within the forwarder.
+     * @param recipient Address to receive tokens.
+     * @param amount Amount to withdraw.
+     */
+    function withdrawReimbursementTokens(address recipient, uint256 amount) public onlyDAOAdmin {
         uint256 forwarderBalance = ICustomToken(tokenAddress).balanceOf(address(this));
-        require(forwarderBalance >= amount, "Insufficient forwarder balance for withdrawal");
-        
+        require(forwarderBalance >= amount, "Insufficient balance");
         require(
             ICustomToken(tokenAddress).transfer(recipient, amount),
-            "Transfer to recipient failed"
+            "Transfer failed"
         );
     }
 }
